@@ -20,8 +20,8 @@ import com.google.common.truth.Truth.assertThat
 import com.squareup.javapoet.JavaFile
 import com.squareup.javapoet.TypeSpec
 import com.squareup.sqldelight.SqliteFileCompiler
+import com.squareup.sqldelight.Status
 import com.squareup.sqldelight.model.relativePath
-import org.junit.Assert.fail
 import org.junit.rules.TemporaryFolder
 import java.io.File
 
@@ -51,24 +51,39 @@ class TestFixturesRule : TemporaryFolder() {
       createTestFile(javaDir, filePath, contents)
 
   private fun createTestFile(dir: File, filePath: String, contents: String): File {
-    val testFileDirPath = filePath.substring(0, filePath.lastIndexOf('/'))
-    val testFileDir = File(dir, testFileDirPath).apply { mkdirs() }
-    val testFileName = filePath.substring(filePath.lastIndexOf('/') + 1)
+    var testFileDir = dir
+    var testFileName = filePath
+    val dirSeparatorIndex = filePath.lastIndexOf('/')
+    if (dirSeparatorIndex >= 0) {
+      val testFileDirPath = filePath.substring(0, dirSeparatorIndex)
+      testFileDir = File(dir, testFileDirPath).apply { mkdirs() }
+      testFileName = filePath.substring(dirSeparatorIndex + 1)
+    }
     return File(testFileDir, testFileName).apply {
       createNewFile()
       writeText(contents)
     }
   }
 
-  fun checkCompilesTo(sqFile: File, output: String) {
-    val inputs = listOf(sqFile)
+  fun checkCompilesTo(sqFile: File, output: String) = compile(
+      listOf(sqFile),
+      successCallback = { file, success ->
+        assertThat(getCompiledFileContents(file, success.model)).isEqualTo(output)
+      })
+
+  fun checkCompilationErrorMessageContains(sqFile: File, error: String) = compile(
+      listOf(sqFile),
+      errorCallback = { assertThat(it.joinToString(separator = "\n\n")).contains(error) })
+
+  private fun compile(
+      inputs: List<File>,
+      successCallback: (File, Status.Success) -> Unit = { file, status -> Unit },
+      errorCallback: (Collection<String>) -> Unit = {}) {
     sqliteFileCompiler.compile(
         inputs = inputs,
         outOfDate = inputs,
-        successCallback = { file, success ->
-          assertThat(getCompiledFileContents(file, success.model)).isEqualTo(output)
-        },
-        errorCallback = { fail(it.joinToString(separator = "\n")) })
+        successCallback = successCallback,
+        errorCallback = errorCallback)
   }
 
   private fun getCompiledFileContents(file: File, model: TypeSpec) = buildString {
